@@ -75,5 +75,5 @@ dependencies {
 
 roborazzi {
     // Directory for reference images
-    outputDir.set(file("src/test/screenshot"))
+    outputDir.set(file("src/test/screenshots"))
 }
