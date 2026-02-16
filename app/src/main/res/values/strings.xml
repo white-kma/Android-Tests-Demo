@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Android Demo</string>
+    <string name="screenshot_testing_txt">This is example\n📸 Screenshot testing application</string>
+    <string name="btn_continue">Continue</string>
+</resources>
