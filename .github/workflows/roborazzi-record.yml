@@ -3,6 +3,9 @@ name: roborazzi-record
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   record:
     runs-on: ubuntu-latest
