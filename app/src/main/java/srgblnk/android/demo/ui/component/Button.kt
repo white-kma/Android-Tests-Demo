@@ -17,7 +17,7 @@ fun DemoButton(
     Button(
         onClick = onClick,
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         contentPadding = PaddingValues(8.dp, 16.dp),
         content = content,
     )
