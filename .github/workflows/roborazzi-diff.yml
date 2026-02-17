@@ -1,0 +1,141 @@
+name: roborazzi-diff
+
+on:
+  workflow_run:
+    workflows: [ "roborazzi-verify" ]
+    types: [ completed ]
+
+permissions: { }
+
+jobs:
+  comment:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Download PR metadata artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: pr
+
+      - name: Read PR number
+        id: pr
+        shell: bash
+        run: |
+          echo "number=$(cat NR)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Switch to companion branch (orphan)
+        id: branch
+        shell: bash
+        env:
+          BRANCH_NAME: companion_${{ github.event.workflow_run.head_branch }}
+        run: |
+          git branch -D "$BRANCH_NAME" || true
+          git checkout --orphan "$BRANCH_NAME"
+          git rm -rf . || true
+          echo "name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Download roborazzi diffs artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: roborazzi-diffs
+          path: roborazzi-diffs
+
+      - name: Collect compare images
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public
+          mapfile -t files < <(find roborazzi-diffs -type f -name "*_compare.png" | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Копируем в public, сохраняя структуру относительных путей
+          for f in "${files[@]}"; do
+            rel="${f#roborazzi-diffs/}"
+            mkdir -p "public/$(dirname "$rel")"
+            cp "$f" "public/$rel"
+          done
+
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push companion branch
+        if: steps.collect.outputs.found == 'true'
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+        run: |
+          git config user.name "ScreenshotBot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public
+          git commit -m "Add roborazzi diffs for run ${{ github.event.workflow_run.id }}" || true
+          git push origin HEAD:"$BRANCH_NAME" -f
+
+      - name: Build markdown report
+        if: steps.collect.outputs.found == 'true'
+        id: report
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+        run: |
+          set -euo pipefail
+
+          delimiter="$(openssl rand -hex 8)"
+          {
+            echo "body<<${delimiter}"
+            echo "❌ **Roborazzi screenshot tests failed**"
+            echo ""
+            echo "Diffs (branch: \`$BRANCH_NAME\`)"
+            echo ""
+            echo "| File | Diff |"
+            echo "|---|---|"
+          } >> "$GITHUB_OUTPUT"
+
+          files=$(find public -type f -name "*_compare.png" | sort | head -n 40)
+          for f in $files; do
+            rel="${f#public/}"
+            file_url="https://github.com/${{ github.repository }}/blob/${BRANCH_NAME}/${f}"
+            img_url="https://github.com/${{ github.repository }}/blob/${BRANCH_NAME}/${f}?raw=true"
+
+            name=$(basename "$rel" | sed -r 's/(.{24})/\1<br>/g')
+            echo "| [$name]($file_url) | ![]($img_url) |" >> "$GITHUB_OUTPUT"
+          done
+
+          echo "${delimiter}" >> "$GITHUB_OUTPUT"
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        if: steps.collect.outputs.found == 'true'
+        with:
+          issue-number: ${{ steps.pr.outputs.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Roborazzi screenshot tests failed
+
+      - name: Add or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.collect.outputs.found == 'true'
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ steps.pr.outputs.number }}
+          body: ${{ steps.report.outputs.body }}
+          edit-mode: replace

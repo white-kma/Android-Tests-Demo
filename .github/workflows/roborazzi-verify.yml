@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   roborazzi:
     runs-on: ubuntu-latest
@@ -23,14 +26,29 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Verify screenshots
+        id: verify
         run: ./gradlew :app:verifyRoborazziDebug
+        continue-on-error: true
 
-      - name: Generate comparison images (only if failed)
-        if: failure()
+      - name: Generate comparison images (only if verify failed)
+        if: steps.verify.outcome == 'failure'
         run: ./gradlew :app:compareRoborazziDebug
 
+      - name: Save PR number
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "${{ github.event.pull_request.number }}" > NR
+
+      - name: Upload PR metadata artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr
+          path: NR
+          retention-days: 7
+
       - name: Upload Roborazzi artifacts (diff/report)
-        if: failure()
+        if: steps.verify.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: roborazzi-diffs
@@ -39,3 +57,7 @@ jobs:
             **/build/outputs/roborazzi/**
             **/build/test-results/**
           retention-days: 7
+
+      - name: Fail job if verification failed
+        if: steps.verify.outcome == 'failure'
+        run: exit 1
